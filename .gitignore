@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Python cache
+.pytest_cache/
+
+# Raw dataset
+dataset/
+*.npy
+
+# Model checkpoints
+checkpoints/
+
+# Generated results
+results/
