@@ -198,3 +198,7 @@ if __name__ == "__main__":
 
     print("\nTotal parameters:")
     print(f"{total_params:,}")
+
+# Restoration network:
+# Input  : 128x128 noisy low-resolution image
+# Output : 256x256 restored image
