@@ -93,3 +93,17 @@ The restoration model is a lightweight convolutional neural network consisting o
           │
           ▼
 256×256 Restored Image
+
+## Current Training Results
+
+The restoration model was trained using paired low-resolution noisy
+images and ground-truth high-resolution images.
+
+Training setup:
+- Training samples: 2560
+- Validation samples: 640
+- Input size: 128 × 128
+- Ground-truth size: 256 × 256
+- GPU: NVIDIA RTX 3050 6GB
+
+The best validation loss observed so far was approximately 0.0355.
