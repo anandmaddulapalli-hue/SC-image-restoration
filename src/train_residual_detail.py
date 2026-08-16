@@ -2,21 +2,25 @@ import os
 import time
 
 import torch
-import torch.optim as optim
 
+from model_residual import ResidualSRNet
 from dataloader import train_loader, validation_loader
-from model import RestorationNet
-from loss import EdgeAwareLoss
+from detail_loss import DetailAwareLoss
+
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
-NUM_EPOCHS = 10
-
+EPOCHS = 10
 LEARNING_RATE = 1e-4
 
-CHECKPOINT_DIR = "checkpoints/edge_aware_fft"
+CHECKPOINT_DIR = "checkpoints/residual_detail"
+
+os.makedirs(
+    CHECKPOINT_DIR,
+    exist_ok=True
+)
 
 
 # ============================================================
@@ -28,113 +32,97 @@ device = torch.device(
 )
 
 print("=" * 70)
-print("TRAINING CONFIGURATION")
+print("RESIDUAL + DETAIL-AWARE LOSS TRAINING")
 print("=" * 70)
 
 print("Device:", device)
 
 if device.type == "cuda":
-    print("GPU:", torch.cuda.get_device_name(0))
+    print(
+        "GPU:",
+        torch.cuda.get_device_name(0)
+    )
 
 
 # ============================================================
-# CREATE CHECKPOINT DIRECTORY
+# MODEL
 # ============================================================
 
-os.makedirs(
-    CHECKPOINT_DIR,
-    exist_ok=True
-)
+model = ResidualSRNet().to(device)
 
 
 # ============================================================
-# CREATE MODEL
+# LOSS
 # ============================================================
 
-model = RestorationNet()
-
-model = model.to(device)
-
-
-# ============================================================
-# LOSS FUNCTION
-# ============================================================
-
-
-criterion = EdgeAwareLoss(
+criterion = DetailAwareLoss(
     alpha=1.0,
-    beta=0.2,
-    gamma=0.1
+    beta=0.15,
+    gamma=0.05
 )
-
-
 
 
 # ============================================================
 # OPTIMIZER
 # ============================================================
 
-optimizer = optim.Adam(
+optimizer = torch.optim.AdamW(
     model.parameters(),
-    lr=LEARNING_RATE
+    lr=LEARNING_RATE,
+    weight_decay=1e-4
 )
 
 
 # ============================================================
-# TRAINING
+# BEST MODEL
 # ============================================================
 
 best_validation_loss = float("inf")
 
 
-for epoch in range(NUM_EPOCHS):
+# ============================================================
+# TRAIN
+# ============================================================
 
-    epoch_start = time.time()
+for epoch in range(EPOCHS):
+
+    start_time = time.time()
 
     # --------------------------------------------------------
-    # TRAINING MODE
+    # Training
     # --------------------------------------------------------
 
     model.train()
 
     running_train_loss = 0.0
 
-    for batch_index, (noisy, gt) in enumerate(train_loader):
+    for noisy, gt in train_loader:
 
-        # Move data to GPU
         noisy = noisy.to(device)
         gt = gt.to(device)
 
-        # Clear previous gradients
         optimizer.zero_grad()
 
-        # Forward pass
         prediction = model(noisy)
 
-        # Calculate loss
         loss = criterion(
             prediction,
             gt
         )
 
-        # Backpropagation
         loss.backward()
 
-        # Update model parameters
         optimizer.step()
 
-        # Accumulate loss
         running_train_loss += loss.item()
 
-    # Average training loss
     average_train_loss = (
         running_train_loss /
         len(train_loader)
     )
 
-
     # --------------------------------------------------------
-    # VALIDATION
+    # Validation
     # --------------------------------------------------------
 
     model.eval()
@@ -162,83 +150,76 @@ for epoch in range(NUM_EPOCHS):
         len(validation_loader)
     )
 
+    # --------------------------------------------------------
+    # Save best
+    # --------------------------------------------------------
 
-    # --------------------------------------------------------
-    # SAVE BEST MODEL
-    # --------------------------------------------------------
+    marker = ""
 
     if average_validation_loss < best_validation_loss:
 
-        best_validation_loss = average_validation_loss
-
-        best_model_path = os.path.join(
-            CHECKPOINT_DIR,
-            "best_model.pth"
+        best_validation_loss = (
+            average_validation_loss
         )
 
         torch.save(
             model.state_dict(),
-            best_model_path
+            os.path.join(
+                CHECKPOINT_DIR,
+                "best_model.pth"
+            )
         )
 
-        saved_message = " <- BEST MODEL"
-
-    else:
-
-        saved_message = ""
-
+        marker = " <- BEST MODEL"
 
     # --------------------------------------------------------
-    # EPOCH TIME
+    # Time
     # --------------------------------------------------------
 
-    epoch_time = time.time() - epoch_start
-
-
-    # --------------------------------------------------------
-    # PRINT RESULTS
-    # --------------------------------------------------------
+    elapsed = time.time() - start_time
 
     print(
-        f"Epoch [{epoch + 1}/{NUM_EPOCHS}] "
+        f"Epoch [{epoch + 1}/{EPOCHS}] "
         f"| Train Loss: {average_train_loss:.6f} "
         f"| Val Loss: {average_validation_loss:.6f} "
-        f"| Time: {epoch_time:.1f}s"
-        f"{saved_message}"
+        f"| Time: {elapsed:.1f}s"
+        f"{marker}"
     )
 
 
 # ============================================================
-# SAVE FINAL MODEL
+# FINAL MODEL
 # ============================================================
-
-final_model_path = os.path.join(
-    CHECKPOINT_DIR,
-    "final_model.pth"
-)
 
 torch.save(
     model.state_dict(),
-    final_model_path
+    os.path.join(
+        CHECKPOINT_DIR,
+        "final_model.pth"
+    )
 )
 
 
-print("\n" + "=" * 70)
+print()
+print("=" * 70)
 print("TRAINING COMPLETE")
 print("=" * 70)
 
-print("Best validation loss:", best_validation_loss)
-
-print("Best model:")
 print(
+    "Best validation loss:",
+    best_validation_loss
+)
+
+print(
+    "Best model:",
     os.path.join(
         CHECKPOINT_DIR,
         "best_model.pth"
     )
 )
 
-print("\nFinal model:")
 print(
+    "Final model:",
     os.path.join(
         CHECKPOINT_DIR,
         "final_model.pth"

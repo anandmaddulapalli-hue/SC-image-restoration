@@ -2,44 +2,24 @@ import os
 import time
 
 import torch
-import torch.optim as optim
+import torch.nn as nn
 
-from dataloader import train_loader, validation_loader
-from model import RestorationNet
-from loss import EdgeAwareLoss
+from model_residual import ResidualSRNet
+from dataloader import (
+    train_loader,
+    validation_loader
+)
+
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
-NUM_EPOCHS = 10
+EPOCHS = 10
 
 LEARNING_RATE = 1e-4
 
-CHECKPOINT_DIR = "checkpoints/edge_aware_fft"
-
-
-# ============================================================
-# DEVICE
-# ============================================================
-
-device = torch.device(
-    "cuda" if torch.cuda.is_available() else "cpu"
-)
-
-print("=" * 70)
-print("TRAINING CONFIGURATION")
-print("=" * 70)
-
-print("Device:", device)
-
-if device.type == "cuda":
-    print("GPU:", torch.cuda.get_device_name(0))
-
-
-# ============================================================
-# CREATE CHECKPOINT DIRECTORY
-# ============================================================
+CHECKPOINT_DIR = "checkpoints/residual_sr"
 
 os.makedirs(
     CHECKPOINT_DIR,
@@ -48,85 +28,100 @@ os.makedirs(
 
 
 # ============================================================
-# CREATE MODEL
+# DEVICE
 # ============================================================
 
-model = RestorationNet()
-
-model = model.to(device)
-
-
-# ============================================================
-# LOSS FUNCTION
-# ============================================================
-
-
-criterion = EdgeAwareLoss(
-    alpha=1.0,
-    beta=0.2,
-    gamma=0.1
+device = torch.device(
+    "cuda"
+    if torch.cuda.is_available()
+    else "cpu"
 )
 
 
+print("=" * 70)
+print("RESIDUAL SUPER-RESOLUTION TRAINING")
+print("=" * 70)
+
+print("Device:", device)
+
+if device.type == "cuda":
+
+    print(
+        "GPU:",
+        torch.cuda.get_device_name(0)
+    )
+
+
+# ============================================================
+# MODEL
+# ============================================================
+
+model = ResidualSRNet().to(device)
+
+
+# ============================================================
+# LOSS
+# ============================================================
+
+criterion = nn.L1Loss()
 
 
 # ============================================================
 # OPTIMIZER
 # ============================================================
 
-optimizer = optim.Adam(
+optimizer = torch.optim.AdamW(
     model.parameters(),
-    lr=LEARNING_RATE
+    lr=LEARNING_RATE,
+    weight_decay=1e-4
 )
 
 
 # ============================================================
-# TRAINING
+# BEST MODEL
 # ============================================================
 
 best_validation_loss = float("inf")
 
 
-for epoch in range(NUM_EPOCHS):
+# ============================================================
+# TRAINING LOOP
+# ============================================================
 
-    epoch_start = time.time()
+for epoch in range(EPOCHS):
+
+    start_time = time.time()
 
     # --------------------------------------------------------
-    # TRAINING MODE
+    # TRAINING
     # --------------------------------------------------------
 
     model.train()
 
     running_train_loss = 0.0
 
-    for batch_index, (noisy, gt) in enumerate(train_loader):
+    for noisy, gt in train_loader:
 
-        # Move data to GPU
         noisy = noisy.to(device)
+
         gt = gt.to(device)
 
-        # Clear previous gradients
         optimizer.zero_grad()
 
-        # Forward pass
         prediction = model(noisy)
 
-        # Calculate loss
         loss = criterion(
             prediction,
             gt
         )
 
-        # Backpropagation
         loss.backward()
 
-        # Update model parameters
         optimizer.step()
 
-        # Accumulate loss
         running_train_loss += loss.item()
 
-    # Average training loss
+
     average_train_loss = (
         running_train_loss /
         len(train_loader)
@@ -146,6 +141,7 @@ for epoch in range(NUM_EPOCHS):
         for noisy, gt in validation_loader:
 
             noisy = noisy.to(device)
+
             gt = gt.to(device)
 
             prediction = model(noisy)
@@ -157,6 +153,7 @@ for epoch in range(NUM_EPOCHS):
 
             running_validation_loss += loss.item()
 
+
     average_validation_loss = (
         running_validation_loss /
         len(validation_loader)
@@ -164,47 +161,37 @@ for epoch in range(NUM_EPOCHS):
 
 
     # --------------------------------------------------------
-    # SAVE BEST MODEL
+    # SAVE BEST
     # --------------------------------------------------------
+
+    marker = ""
 
     if average_validation_loss < best_validation_loss:
 
-        best_validation_loss = average_validation_loss
-
-        best_model_path = os.path.join(
-            CHECKPOINT_DIR,
-            "best_model.pth"
+        best_validation_loss = (
+            average_validation_loss
         )
 
         torch.save(
             model.state_dict(),
-            best_model_path
+            os.path.join(
+                CHECKPOINT_DIR,
+                "best_model.pth"
+            )
         )
 
-        saved_message = " <- BEST MODEL"
-
-    else:
-
-        saved_message = ""
+        marker = " <- BEST MODEL"
 
 
-    # --------------------------------------------------------
-    # EPOCH TIME
-    # --------------------------------------------------------
+    elapsed = time.time() - start_time
 
-    epoch_time = time.time() - epoch_start
-
-
-    # --------------------------------------------------------
-    # PRINT RESULTS
-    # --------------------------------------------------------
 
     print(
-        f"Epoch [{epoch + 1}/{NUM_EPOCHS}] "
+        f"Epoch [{epoch + 1}/{EPOCHS}] "
         f"| Train Loss: {average_train_loss:.6f} "
         f"| Val Loss: {average_validation_loss:.6f} "
-        f"| Time: {epoch_time:.1f}s"
-        f"{saved_message}"
+        f"| Time: {elapsed:.1f}s"
+        f"{marker}"
     )
 
 
@@ -212,33 +199,39 @@ for epoch in range(NUM_EPOCHS):
 # SAVE FINAL MODEL
 # ============================================================
 
-final_model_path = os.path.join(
-    CHECKPOINT_DIR,
-    "final_model.pth"
-)
-
 torch.save(
     model.state_dict(),
-    final_model_path
+    os.path.join(
+        CHECKPOINT_DIR,
+        "final_model.pth"
+    )
 )
 
 
-print("\n" + "=" * 70)
+# ============================================================
+# COMPLETE
+# ============================================================
+
+print()
+print("=" * 70)
 print("TRAINING COMPLETE")
 print("=" * 70)
 
-print("Best validation loss:", best_validation_loss)
-
-print("Best model:")
 print(
+    "Best validation loss:",
+    best_validation_loss
+)
+
+print(
+    "Best model:",
     os.path.join(
         CHECKPOINT_DIR,
         "best_model.pth"
     )
 )
 
-print("\nFinal model:")
 print(
+    "Final model:",
     os.path.join(
         CHECKPOINT_DIR,
         "final_model.pth"

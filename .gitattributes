@@ -1,0 +1,2 @@
+results/final_submission/*.npy filter=lfs diff=lfs merge=lfs -text
+checkpoints/**/*.pth filter=lfs diff=lfs merge=lfs -text

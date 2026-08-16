@@ -4,42 +4,32 @@ import time
 import torch
 import torch.optim as optim
 
-from dataloader import train_loader, validation_loader
-from model import RestorationNet
-from loss import EdgeAwareLoss
+from frequency_loss import FrequencyAwareLoss
+from dataloader import (
+    train_loader,
+    validation_loader
+)
+
+from model_hf_residual import (
+    HFResidualSRNet
+)
+
+from hf_loss import (
+    HFRestorationLoss
+)
+
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
-NUM_EPOCHS = 10
+EPOCHS = 10
 
 LEARNING_RATE = 1e-4
 
-CHECKPOINT_DIR = "checkpoints/edge_aware_fft"
-
-
-# ============================================================
-# DEVICE
-# ============================================================
-
-device = torch.device(
-    "cuda" if torch.cuda.is_available() else "cpu"
+CHECKPOINT_DIR = (
+    "checkpoints/hf_frequency"
 )
-
-print("=" * 70)
-print("TRAINING CONFIGURATION")
-print("=" * 70)
-
-print("Device:", device)
-
-if device.type == "cuda":
-    print("GPU:", torch.cuda.get_device_name(0))
-
-
-# ============================================================
-# CREATE CHECKPOINT DIRECTORY
-# ============================================================
 
 os.makedirs(
     CHECKPOINT_DIR,
@@ -48,87 +38,125 @@ os.makedirs(
 
 
 # ============================================================
-# CREATE MODEL
+# DEVICE
 # ============================================================
 
-model = RestorationNet()
-
-model = model.to(device)
-
-
-# ============================================================
-# LOSS FUNCTION
-# ============================================================
-
-
-criterion = EdgeAwareLoss(
-    alpha=1.0,
-    beta=0.2,
-    gamma=0.1
+device = torch.device(
+    "cuda"
+    if torch.cuda.is_available()
+    else "cpu"
 )
 
+print("=" * 70)
+print("HIGH-FREQUENCY RESIDUAL SUPER-RESOLUTION")
+print("=" * 70)
 
+print("Device:", device)
+
+if device.type == "cuda":
+
+    print(
+        "GPU:",
+        torch.cuda.get_device_name(0)
+    )
+
+
+# ============================================================
+# MODEL
+# ============================================================
+
+model = HFResidualSRNet(
+    channels=96,
+    num_blocks=8
+).to(device)
+
+
+# ============================================================
+# LOSS
+# ============================================================
+
+criterion = FrequencyAwareLoss(
+    alpha=1.0,
+    beta=0.15,
+    gamma=0.05,
+    delta=0.05
+).to(device)
 
 
 # ============================================================
 # OPTIMIZER
 # ============================================================
 
-optimizer = optim.Adam(
+optimizer = optim.AdamW(
     model.parameters(),
-    lr=LEARNING_RATE
+    lr=LEARNING_RATE,
+    weight_decay=1e-4
 )
+
+
+# ============================================================
+# SCHEDULER
+# ============================================================
+
+scheduler = optim.lr_scheduler.CosineAnnealingLR(
+    optimizer,
+    T_max=EPOCHS
+)
+
+
+# ============================================================
+# BEST MODEL
+# ============================================================
+
+best_validation_loss = float("inf")
 
 
 # ============================================================
 # TRAINING
 # ============================================================
 
-best_validation_loss = float("inf")
+for epoch in range(EPOCHS):
 
-
-for epoch in range(NUM_EPOCHS):
-
-    epoch_start = time.time()
+    start_time = time.time()
 
     # --------------------------------------------------------
-    # TRAINING MODE
+    # TRAIN
     # --------------------------------------------------------
 
     model.train()
 
     running_train_loss = 0.0
 
-    for batch_index, (noisy, gt) in enumerate(train_loader):
+    for noisy, gt in train_loader:
 
-        # Move data to GPU
         noisy = noisy.to(device)
         gt = gt.to(device)
 
-        # Clear previous gradients
         optimizer.zero_grad()
 
-        # Forward pass
         prediction = model(noisy)
 
-        # Calculate loss
         loss = criterion(
             prediction,
             gt
         )
 
-        # Backpropagation
         loss.backward()
 
-        # Update model parameters
+        # Prevent unstable gradients
+        torch.nn.utils.clip_grad_norm_(
+            model.parameters(),
+            max_norm=1.0
+        )
+
         optimizer.step()
 
-        # Accumulate loss
         running_train_loss += loss.item()
 
-    # Average training loss
+
     average_train_loss = (
-        running_train_loss /
+        running_train_loss
+        /
         len(train_loader)
     )
 
@@ -148,97 +176,119 @@ for epoch in range(NUM_EPOCHS):
             noisy = noisy.to(device)
             gt = gt.to(device)
 
-            prediction = model(noisy)
+            prediction = model(
+                noisy
+            )
 
             loss = criterion(
                 prediction,
                 gt
             )
 
-            running_validation_loss += loss.item()
+            running_validation_loss += (
+                loss.item()
+            )
+
 
     average_validation_loss = (
-        running_validation_loss /
+        running_validation_loss
+        /
         len(validation_loader)
     )
+
+
+    # --------------------------------------------------------
+    # LEARNING RATE
+    # --------------------------------------------------------
+
+    scheduler.step()
 
 
     # --------------------------------------------------------
     # SAVE BEST MODEL
     # --------------------------------------------------------
 
-    if average_validation_loss < best_validation_loss:
+    best_marker = ""
 
-        best_validation_loss = average_validation_loss
+    if (
+        average_validation_loss
+        <
+        best_validation_loss
+    ):
 
-        best_model_path = os.path.join(
-            CHECKPOINT_DIR,
-            "best_model.pth"
+        best_validation_loss = (
+            average_validation_loss
         )
 
         torch.save(
             model.state_dict(),
-            best_model_path
+            os.path.join(
+                CHECKPOINT_DIR,
+                "best_model.pth"
+            )
         )
 
-        saved_message = " <- BEST MODEL"
-
-    else:
-
-        saved_message = ""
+        best_marker = " <- BEST MODEL"
 
 
     # --------------------------------------------------------
-    # EPOCH TIME
+    # SAVE FINAL MODEL
     # --------------------------------------------------------
 
-    epoch_time = time.time() - epoch_start
+    if epoch == EPOCHS - 1:
+
+        torch.save(
+            model.state_dict(),
+            os.path.join(
+                CHECKPOINT_DIR,
+                "final_model.pth"
+            )
+        )
 
 
     # --------------------------------------------------------
-    # PRINT RESULTS
+    # TIME
     # --------------------------------------------------------
+
+    elapsed = time.time() - start_time
+
 
     print(
-        f"Epoch [{epoch + 1}/{NUM_EPOCHS}] "
-        f"| Train Loss: {average_train_loss:.6f} "
-        f"| Val Loss: {average_validation_loss:.6f} "
-        f"| Time: {epoch_time:.1f}s"
-        f"{saved_message}"
+        f"Epoch [{epoch + 1}/{EPOCHS}] "
+        f"| Train Loss: "
+        f"{average_train_loss:.6f} "
+        f"| Val Loss: "
+        f"{average_validation_loss:.6f} "
+        f"| Time: "
+        f"{elapsed:.1f}s"
+        f"{best_marker}"
     )
 
 
 # ============================================================
-# SAVE FINAL MODEL
+# COMPLETE
 # ============================================================
 
-final_model_path = os.path.join(
-    CHECKPOINT_DIR,
-    "final_model.pth"
-)
-
-torch.save(
-    model.state_dict(),
-    final_model_path
-)
-
-
-print("\n" + "=" * 70)
+print()
+print("=" * 70)
 print("TRAINING COMPLETE")
 print("=" * 70)
 
-print("Best validation loss:", best_validation_loss)
-
-print("Best model:")
 print(
+    "Best validation loss:",
+    best_validation_loss
+)
+
+print(
+    "Best model:",
     os.path.join(
         CHECKPOINT_DIR,
         "best_model.pth"
     )
 )
 
-print("\nFinal model:")
 print(
+    "Final model:",
     os.path.join(
         CHECKPOINT_DIR,
         "final_model.pth"
