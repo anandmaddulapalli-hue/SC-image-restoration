@@ -4,7 +4,6 @@ import glob
 
 import numpy as np
 import torch
-
 from model_hf_residual import HFResidualSRNet
 
 
@@ -21,29 +20,23 @@ MODEL_PATH = "checkpoints/hf_residual/best_model.pth"
 
 if len(sys.argv) != 3:
 
+    print("\nUsage:")
     print(
-        "\nUsage:"
+        "python src/generate_final_submission_ensemble.py "
+        "<test_input_directory> <output_directory>"
     )
 
+    print("\nExample:")
     print(
-        "python src/evaluate.py <test_input_directory> <output_directory>"
-    )
-
-    print(
-        "\nExample:"
-    )
-
-    print(
-        "python src/evaluate.py "
-        "D:\\SEMICON\\dataset\\test\\NoisyLR "
-        "results\\test_restored"
+        r"python src/generate_final_submission_ensemble.py "
+        r"D:\SEMICON\dataset\test\NoisyLR "
+        r"results\final_submission"
     )
 
     sys.exit(1)
 
 
 TEST_DIR = sys.argv[1]
-
 OUTPUT_DIR = sys.argv[2]
 
 
@@ -56,13 +49,12 @@ device = torch.device(
 )
 
 print("=" * 70)
-print("FINAL MODEL INFERENCE")
+print("FINAL SUBMISSION - HF RESIDUAL + SELF-ENSEMBLE")
 print("=" * 70)
 
 print("Device:", device)
 
 if device.type == "cuda":
-
     print(
         "GPU:",
         torch.cuda.get_device_name(0)
@@ -70,15 +62,12 @@ if device.type == "cuda":
 
 
 # ============================================================
-# CHECK INPUT DIRECTORY
+# CHECK INPUT
 # ============================================================
 
 if not os.path.isdir(TEST_DIR):
 
-    print(
-        f"\nERROR: Input directory does not exist:"
-    )
-
+    print("\nERROR: Test directory not found:")
     print(TEST_DIR)
 
     sys.exit(1)
@@ -90,17 +79,14 @@ if not os.path.isdir(TEST_DIR):
 
 if not os.path.isfile(MODEL_PATH):
 
-    print(
-        f"\nERROR: Model checkpoint not found:"
-    )
-
+    print("\nERROR: Model checkpoint not found:")
     print(MODEL_PATH)
 
     sys.exit(1)
 
 
 # ============================================================
-# FIND TEST IMAGES
+# FIND TEST FILES
 # ============================================================
 
 test_files = sorted(
@@ -112,21 +98,15 @@ test_files = sorted(
     )
 )
 
-
-if len(test_files) == 0:
-
-    print(
-        "\nERROR: No .npy files found in:"
-    )
-
-    print(TEST_DIR)
-
-    sys.exit(1)
-
-
 print(
     f"\nTest images found: {len(test_files)}"
 )
+
+if len(test_files) == 0:
+
+    print("\nERROR: No .npy files found.")
+
+    sys.exit(1)
 
 
 # ============================================================
@@ -143,36 +123,108 @@ os.makedirs(
 # LOAD MODEL
 # ============================================================
 
-print("\nLoading final model...")
+print("\nLoading HF Residual model...")
 
-
-model = HFResidualSRNet()
-
-
-checkpoint = torch.load(
-    MODEL_PATH,
-    map_location=device
-)
+model = HFResidualSRNet(
+    channels=96,
+    num_blocks=8
+).to(device)
 
 
 model.load_state_dict(
-    checkpoint
+    torch.load(
+        MODEL_PATH,
+        map_location=device
+    )
 )
 
-
-model = model.to(device)
-
 model.eval()
-
 
 print("Model loaded successfully.")
 
 
 # ============================================================
-# INFERENCE
+# SELF-ENSEMBLE
 # ============================================================
 
-print("\nGenerating predictions...\n")
+def self_ensemble_predict(
+    model,
+    image
+):
+
+    # --------------------------------------------------------
+    # 1. Original
+    # --------------------------------------------------------
+
+    pred_original = model(image)
+
+    # --------------------------------------------------------
+    # 2. Horizontal flip
+    # --------------------------------------------------------
+
+    image_h = torch.flip(
+        image,
+        dims=[3]
+    )
+
+    pred_h = model(image_h)
+
+    pred_h = torch.flip(
+        pred_h,
+        dims=[3]
+    )
+
+    # --------------------------------------------------------
+    # 3. Vertical flip
+    # --------------------------------------------------------
+
+    image_v = torch.flip(
+        image,
+        dims=[2]
+    )
+
+    pred_v = model(image_v)
+
+    pred_v = torch.flip(
+        pred_v,
+        dims=[2]
+    )
+
+    # --------------------------------------------------------
+    # 4. Horizontal + vertical flip
+    # --------------------------------------------------------
+
+    image_hv = torch.flip(
+        image,
+        dims=[2, 3]
+    )
+
+    pred_hv = model(image_hv)
+
+    pred_hv = torch.flip(
+        pred_hv,
+        dims=[2, 3]
+    )
+
+    # --------------------------------------------------------
+    # Average
+    # --------------------------------------------------------
+
+    prediction = (
+        pred_original
+        + pred_h
+        + pred_v
+        + pred_hv
+    ) / 4.0
+
+    return prediction
+
+
+# ============================================================
+# GENERATE PREDICTIONS
+# ============================================================
+
+print("\nGenerating final predictions...\n")
 
 
 with torch.no_grad():
@@ -180,13 +232,14 @@ with torch.no_grad():
     for index, file_path in enumerate(test_files):
 
         # ----------------------------------------------------
-        # Load input
+        # Load LR image
         # ----------------------------------------------------
 
-        image = np.load(file_path).astype(
+        image = np.load(
+            file_path
+        ).astype(
             np.float32
         )
-
 
         # ----------------------------------------------------
         # Convert to tensor
@@ -196,28 +249,30 @@ with torch.no_grad():
             image
         ).unsqueeze(0).unsqueeze(0)
 
-
         tensor = tensor.to(device)
 
-
         # ----------------------------------------------------
-        # Model inference
+        # Self-ensemble inference
         # ----------------------------------------------------
 
-        prediction = model(
+        prediction = self_ensemble_predict(
+            model,
             tensor
         )
 
+        # ----------------------------------------------------
+        # Convert to numpy
+        # ----------------------------------------------------
+
+        prediction = (
+            prediction
+            .squeeze()
+            .cpu()
+            .numpy()
+        )
 
         # ----------------------------------------------------
-        # Move prediction to CPU
-        # ----------------------------------------------------
-
-        prediction = prediction.squeeze().cpu().numpy()
-
-
-        # ----------------------------------------------------
-        # Keep valid image range
+        # Valid image range
         # ----------------------------------------------------
 
         prediction = np.clip(
@@ -228,27 +283,27 @@ with torch.no_grad():
             np.float32
         )
 
-
         # ----------------------------------------------------
-        # Save using original filename
+        # Preserve original filename
         # ----------------------------------------------------
 
         filename = os.path.basename(
             file_path
         )
 
-
         output_path = os.path.join(
             OUTPUT_DIR,
             filename
         )
 
+        # ----------------------------------------------------
+        # Save
+        # ----------------------------------------------------
 
         np.save(
             output_path,
             prediction
         )
-
 
         # ----------------------------------------------------
         # Progress
@@ -268,7 +323,7 @@ with torch.no_grad():
 
 
 # ============================================================
-# FINAL CHECK
+# FINAL VALIDATION
 # ============================================================
 
 output_files = sorted(
@@ -282,7 +337,7 @@ output_files = sorted(
 
 
 print("\n" + "=" * 70)
-print("INFERENCE COMPLETE")
+print("FINAL SUBMISSION READY")
 print("=" * 70)
 
 print(
@@ -297,25 +352,50 @@ print(
 if len(test_files) != len(output_files):
 
     print(
-        "\nWARNING: Number of output files does not match input files!"
+        "\nERROR: Input/output count mismatch!"
     )
 
     sys.exit(1)
 
 
-# Check one output
+# ------------------------------------------------------------
+# Check all output shapes
+# ------------------------------------------------------------
+
+print("\nChecking output shapes...")
+
+for file_path in output_files:
+
+    output = np.load(
+        file_path
+    )
+
+    if output.shape != (256, 256):
+
+        print(
+            "\nERROR: Invalid output shape:"
+        )
+
+        print(
+            file_path,
+            output.shape
+        )
+
+        sys.exit(1)
+
+
+# ------------------------------------------------------------
+# Check sample
+# ------------------------------------------------------------
+
+sample_path = output_files[0]
 
 sample = np.load(
-    output_files[0]
+    sample_path
 )
 
-print(
-    "\nSample output:"
-)
-
-print(
-    output_files[0]
-)
+print("\nSample output:")
+print(sample_path)
 
 print(
     "Shape:",
@@ -332,6 +412,11 @@ print(
     sample.max()
 )
 
+print("\nALL CHECKS PASSED!")
+
+print("\nSubmission folder:")
 print(
-    "\nAll inference checks passed."
+    os.path.abspath(
+        OUTPUT_DIR
+    )
 )
