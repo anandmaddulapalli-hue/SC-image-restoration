@@ -2,6 +2,8 @@
 
 An AI-based image restoration project designed to reconstruct high-resolution semiconductor inspection images from degraded low-resolution and noisy inputs.
 
+---
+
 ## KLA Final Submission
 
 ### Final Model
@@ -15,7 +17,7 @@ Model configuration:
 - Input: grayscale `.npy` image
 - Input resolution: 128 x 128
 - Output resolution: 256 x 256
-- Model: HFResidualSRNet
+- Model: `HFResidualSRNet`
 - Feature channels: 96
 - Residual blocks: 8
 - Upscaling factor: 2x
@@ -24,9 +26,9 @@ Model configuration:
   - Horizontal flip
   - Vertical flip
   - Horizontal + vertical flip
-- Final prediction is the average of all four restored outputs.
+- Final prediction is obtained by averaging the four restored outputs.
 
-### Required Folder Structure
+### Submission Folder Structure
 
 ```text
 SC-image-restoration/
@@ -37,25 +39,122 @@ SC-image-restoration/
 │   └── hf_residual_best.pth
 └── src/
     └── model_hf_residual.py
+```
 
+### Setup
 
+Clone the repository:
 
-## 📌 Project Overview
+```bash
+git clone https://github.com/anandmaddulapalli-hue/SC-image-restoration.git
+cd SC-image-restoration
+```
 
-Semiconductor inspection systems require high-quality images to detect small defects and structural details. However, captured images can suffer from:
+Create a Python virtual environment:
 
-* Low spatial resolution
-* Noise and artifacts
-* Loss of high-frequency details
-* Blurring and degradation
+```bash
+python -m venv .venv
+```
 
-This project explores deep-learning-based image restoration and super-resolution techniques to recover a high-resolution image from a degraded low-resolution input.
+Activate it on Windows:
 
-The project compares multiple restoration architectures, loss functions, and frequency/detail-aware approaches to identify an effective restoration model.
+```powershell
+.venv\Scripts\activate
+```
+
+Install the required dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+### Run Inference
+
+The required execution command is:
+
+```bash
+python run.py <input-dir> <output-dir>
+```
+
+Example:
+
+```bash
+python run.py test/NoisyLR restored_output
+```
+
+The input directory must contain grayscale `.npy` files.
+
+For every input `.npy` file, `run.py`:
+
+1. Loads the degraded grayscale image.
+2. Runs `HFResidualSRNet`.
+3. Applies 4-way self-ensemble inference.
+4. Produces a 2x restored image.
+5. Clips output values to `[0,1]`.
+6. Checks for NaN and Inf values.
+7. Saves the restored result as `float32` `.npy`.
+8. Preserves the original input filename.
+
+### Output Format
+
+For an input file:
+
+```text
+000123.npy
+```
+
+the corresponding restored output is:
+
+```text
+000123.npy
+```
+
+Expected output properties:
+
+- Grayscale image
+- Shape: `(H, W)`
+- For 128 x 128 input: 256 x 256 output
+- Data type: `float32`
+- Value range: `[0,1]`
+- No NaN values
+- No Inf values
+
+### Hardware and Offline Execution
+
+The script automatically uses an NVIDIA CUDA GPU when available and falls back to CPU otherwise.
+
+All required model weights are included locally in:
+
+```text
+models/hf_residual_best.pth
+```
+
+Inference does not require:
+
+- Internet access
+- API keys
+- Additional model downloads
+- User interaction
+- Manual model configuration
 
 ---
 
-## 📂 Dataset
+## Project Overview
+
+Semiconductor inspection systems require high-quality images to detect small defects and structural details. Captured images can suffer from:
+
+- Low spatial resolution
+- Noise and artifacts
+- Loss of high-frequency details
+- Blurring and degradation
+
+This project explores deep-learning-based restoration and super-resolution approaches for reconstructing high-resolution semiconductor inspection images from degraded low-resolution inputs.
+
+Multiple restoration architectures, loss functions, and frequency/detail-aware approaches were explored before selecting the final HF Residual model.
+
+---
+
+## Dataset
 
 The dataset contains paired ground-truth and degraded images.
 
@@ -74,10 +173,10 @@ data/
         └── ...
 ```
 
-* Training samples: **3200**
-* Ground-truth image size: **256 × 256**
-* Noisy low-resolution image size: **128 × 128**
-* Images are stored as NumPy `.npy` arrays.
+- Training samples: 3200
+- Ground-truth image size: 256 x 256
+- Noisy low-resolution image size: 128 x 128
+- Images are stored as NumPy `.npy` arrays
 
 ### Test Data
 
@@ -90,55 +189,137 @@ data/
         └── ...
 ```
 
-* Test samples: **400**
-* Input size: **128 × 128**
+- Test samples: 400
+- Input size: 128 x 128
 
-> The dataset is not included in this repository.
+The dataset is not included in this repository.
 
 ---
 
-## 🧠 Approach
+## Final Model Architecture
 
-The project progressively experiments with several restoration strategies.
+The final model is a High-Frequency Residual Super-Resolution Network.
+
+The restoration pipeline is:
+
+```text
+Noisy Low-Resolution Input
+        |
+        v
+Bicubic 2x Upsampling
+        |
+        +----------------------+
+        |                      |
+        v                      |
+Feature Extraction            |
+        |                      |
+        v                      |
+8 Residual Blocks             |
+        |                      |
+        v                      |
+Feature Fusion                |
+        |                      |
+        v                      |
+PixelShuffle 2x Upsampling    |
+        |                      |
+        v                      |
+High-Frequency Detail Head    |
+        |                      |
+        +----------+-----------+
+                   |
+                   v
+      Bicubic + Learned Detail
+                   |
+                   v
+          Restored Output
+```
+
+The network learns a high-frequency correction and adds it to a bicubic-upsampled baseline.
+
+---
+
+## 4-Way Self-Ensemble
+
+The final submission improves prediction robustness using geometric self-ensemble inference.
+
+The same trained model is evaluated on:
+
+1. Original input
+2. Horizontally flipped input
+3. Vertically flipped input
+4. Horizontally and vertically flipped input
+
+Each transformed prediction is converted back to the original orientation.
+
+The four restored outputs are then averaged:
+
+```text
+Final Prediction =
+(
+    Original Prediction
+    + Horizontal Flip Prediction
+    + Vertical Flip Prediction
+    + Horizontal + Vertical Flip Prediction
+) / 4
+```
+
+This is a self-ensemble of one trained model, not an ensemble of four separately trained models.
+
+---
+
+## Validation Result of Final Model
+
+The selected HF Residual + 4-Way Self-Ensemble model achieved:
+
+- Average PSNR: **28.0318 dB**
+- Average SSIM: **0.756524**
+- Validation images: **640**
+
+These metrics were measured on the validation dataset.
+
+---
+
+## Experimental Approaches
+
+Several restoration approaches were explored during development.
 
 ### Baseline
 
-A convolutional restoration network is used as the initial baseline.
+A convolutional restoration network was used as the initial reference model.
 
 ### Residual Learning
 
-Residual architectures are explored to learn the difference between the degraded input and the desired high-resolution image.
+Residual architectures were tested to improve feature reconstruction.
 
 ### Bicubic + Residual Restoration
 
-Bicubic interpolation is used to first upscale the low-resolution image to 256 × 256, after which a neural network learns to restore the remaining details.
+The low-resolution image was first upscaled using bicubic interpolation, after which a neural network learned the remaining restoration details.
 
 ### Attention-Based Restoration
 
-Residual attention mechanisms are investigated to help the model focus on important image features.
+Channel and spatial attention mechanisms were explored to help the network focus on important features.
 
 ### High-Frequency / Detail-Aware Restoration
 
-Additional experiments focus on recovering high-frequency information that is commonly lost during image degradation.
+Additional experiments focused on recovering fine image information using:
 
-These include:
-
-* High-frequency-aware losses
-* Frequency-domain losses
-* Detail-aware losses
-* Multi-scale high-frequency losses
-* High-frequency residual learning
-
-### Model Comparison
-
-Multiple trained models are evaluated and compared using the validation dataset to identify the strongest restoration approach.
+- High-frequency-aware losses
+- Frequency-domain losses
+- Detail-aware losses
+- Multi-scale high-frequency losses
+- High-frequency residual learning
 
 ---
 
-## 🏗️ Project Structure
+## Project Structure
 
 ```text
 SC-image-restoration/
+│
+├── run.py
+│
+├── models/
+│   └── hf_residual_best.pth
 │
 ├── src/
 │   ├── model_baseline.py
@@ -180,10 +361,11 @@ SC-image-restoration/
 │   ├── generate_final_submission.py
 │   └── generate_final_submission_ensemble.py
 │
-├── checkpoints/              # Ignored - trained model weights
-├── results/                  # Ignored - generated results
-├── data/                     # Ignored - dataset
-├── .venv/                    # Ignored - Python virtual environment
+├── checkpoints/          # Local experimental checkpoints, ignored by Git
+├── results/              # Generated experimental results, ignored by Git
+├── data/                 # Dataset, ignored by Git
+├── .venv/                # Virtual environment, ignored by Git
+│
 ├── .gitignore
 ├── .gitattributes
 ├── requirements.txt
@@ -192,52 +374,14 @@ SC-image-restoration/
 
 ---
 
-## ⚙️ Environment Setup
+## Training
 
-### 1. Clone the repository
+Training scripts are located in the `src/` directory.
 
-```bash
-git clone https://github.com/anandmaddulapalli-hue/SC-image-restoration.git
-cd SC-image-restoration
-```
-
-### 2. Create a virtual environment
-
-Windows:
-
-```powershell
-python -m venv .venv
-```
-
-Activate it:
-
-```powershell
-.venv\Scripts\activate
-```
-
-### 3. Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-> The project was developed and tested using a CUDA-enabled PyTorch environment where GPU acceleration was available.
-
----
-
-## 🚀 Training
-
-Training scripts are located inside the `src/` directory.
-
-For example:
+Examples:
 
 ```bash
 python src/train.py
-```
-
-Other experiments can be trained using their corresponding scripts:
-
-```bash
 python src/train_residual.py
 python src/train_bicubic_residual.py
 python src/train_residual_attention.py
@@ -246,17 +390,23 @@ python src/train_hf_deep.py
 python src/train_bicubic_multiscale_hf.py
 ```
 
-Trained model checkpoints are saved under:
+Experimental checkpoints are saved locally under:
 
 ```text
 checkpoints/
 ```
 
-This directory is intentionally excluded from Git because model files can be large.
+The experimental checkpoint directory is ignored by Git.
+
+The final submission checkpoint is separately included under:
+
+```text
+models/hf_residual_best.pth
+```
 
 ---
 
-## 📊 Evaluation
+## Evaluation
 
 Evaluation scripts are provided for the different model variants.
 
@@ -268,99 +418,61 @@ python src/evaluate_residual.py
 python src/evaluate_bicubic_residual.py
 python src/evaluate_hf_residual.py
 python src/evaluate_hf_deep.py
+python src/evaluate_hf_ensemble.py
 ```
 
-Model comparison can be performed using:
+The selected final validation method is:
 
 ```bash
-python src/compare_residual_models.py
+python src/evaluate_hf_ensemble.py
 ```
 
 ---
 
-## 📦 Generate Final Submission
+## Technologies Used
 
-The final restored test images can be generated using:
+- Python
+- PyTorch
+- NumPy
+- SciPy
+- scikit-image
+- Matplotlib
+- ImageIO
+- CUDA
+- Deep Learning
+- Image Restoration
+- Super-Resolution
+- Residual Learning
+- High-Frequency Restoration
 
-```bash
-python src/generate_final_submission.py
-```
+---
 
-An ensemble-based submission can also be generated using:
+## Hardware
 
-```bash
-python src/generate_final_submission_ensemble.py
-```
+Development and testing were performed using a CUDA-enabled NVIDIA GPU.
 
-Generated submission files are stored under:
+Example development hardware:
+
+- NVIDIA GeForce RTX 3050 Laptop GPU
+- 6 GB VRAM
+- CUDA-enabled PyTorch
+
+The final inference script automatically selects CUDA when available.
+
+---
+
+## Objective
+
+The primary objective is to develop an AI-based restoration pipeline capable of reconstructing high-resolution semiconductor inspection images while preserving fine structural and high-frequency information.
+
+The final solution combines high-frequency residual learning with 4-way self-ensemble inference to improve restoration quality while maintaining the required `.npy` input/output format.
+
+---
+
+## Repository
+
+GitHub:
 
 ```text
-results/
+https://github.com/anandmaddulapalli-hue/SC-image-restoration
 ```
-
-The generated results are intentionally excluded from Git.
-
----
-
-## 🔬 Experiments
-
-The project investigates the effect of different restoration strategies, including:
-
-| Experiment         | Main Idea                                |
-| ------------------ | ---------------------------------------- |
-| Baseline           | Basic convolutional restoration          |
-| Residual           | Residual learning                        |
-| Bicubic Residual   | Bicubic upsampling + residual refinement |
-| Residual Attention | Attention-enhanced residual restoration  |
-| Residual Detail    | Detail-aware restoration                 |
-| HF Residual        | High-frequency residual learning         |
-| HF Deep            | Deeper high-frequency restoration        |
-| Frequency Aware    | Frequency-domain information             |
-| Multi-scale HF     | Multi-scale high-frequency information   |
-| Ensemble           | Combining multiple restoration models    |
-
-The goal is to determine which approach best preserves fine semiconductor image structures while suppressing degradation and noise.
-
----
-
-## 🖥️ Hardware
-
-The project was trained using a CUDA-enabled NVIDIA GPU.
-
-Example development environment:
-
-* NVIDIA GeForce RTX 3050 Laptop GPU
-* 6 GB VRAM
-* CUDA-enabled PyTorch
-
-CPU execution is also possible, although training is significantly slower.
-
----
-
-## 🛠️ Technologies Used
-
-* Python
-* PyTorch
-* NumPy
-* SciPy
-* scikit-image
-* Matplotlib
-* ImageIO
-* Deep Learning
-* Image Restoration
-* Super-Resolution
-* Frequency-Domain Processing
-
----
-
-## 🎯 Objective
-
-The primary objective is to develop an effective AI-based restoration pipeline capable of reconstructing high-resolution semiconductor inspection images while preserving important fine-scale and high-frequency details.
-
-The experiments focus not only on reducing pixel-level reconstruction error, but also on improving the visual and structural quality of restored images.
-
----
-
-## 👥 Project
-
-This repository contains the implementation, experiments, evaluation scripts, and submission-generation pipeline developed for the semiconductor image restoration project.
