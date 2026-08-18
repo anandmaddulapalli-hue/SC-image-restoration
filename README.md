@@ -2,6 +2,44 @@
 
 An AI-based image restoration project designed to reconstruct high-resolution semiconductor inspection images from degraded low-resolution and noisy inputs.
 
+## KLA Final Submission
+
+### Final Model
+
+The final submission uses:
+
+**HF Residual Super-Resolution Network + 4-Way Self-Ensemble**
+
+Model configuration:
+
+- Input: grayscale `.npy` image
+- Input resolution: 128 x 128
+- Output resolution: 256 x 256
+- Model: HFResidualSRNet
+- Feature channels: 96
+- Residual blocks: 8
+- Upscaling factor: 2x
+- Self-ensemble:
+  - Original input
+  - Horizontal flip
+  - Vertical flip
+  - Horizontal + vertical flip
+- Final prediction is the average of all four restored outputs.
+
+### Required Folder Structure
+
+```text
+SC-image-restoration/
+├── run.py
+├── requirements.txt
+├── README.md
+├── models/
+│   └── hf_residual_best.pth
+└── src/
+    └── model_hf_residual.py
+
+
+
 ## 📌 Project Overview
 
 Semiconductor inspection systems require high-quality images to detect small defects and structural details. However, captured images can suffer from:
